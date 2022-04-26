@@ -11,5 +11,6 @@ Run in shell
 ```console
 python -m venv Code\venv
 Code\venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
