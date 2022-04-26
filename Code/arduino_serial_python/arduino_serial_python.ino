@@ -103,7 +103,7 @@ void parseData() {
  * Sets angles of servo motors to the values in servoPosArray
  */
 void useParsedData() {
-    servo1.write(servoPosArray[0] + home_pos);
-    servo2.write(servoPosArray[1] + home_pos);
-    servo3.write(servoPosArray[2] + home_pos);
+    servo1.write(servoPosArray[0] + home_pos[0]);
+    servo2.write(servoPosArray[1] + home_pos[1]);
+    servo3.write(servoPosArray[2] + home_pos[2]);
 }
