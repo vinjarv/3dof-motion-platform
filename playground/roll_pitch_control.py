@@ -25,6 +25,8 @@ servo3_angle = 0
 angle_min = -15
 angle_max = 15
 
+def constrain(lower, val, upper):
+    return max(lower, max(val, upper))
 
 def ikine(p, r):
     R = 40
@@ -34,8 +36,9 @@ def ikine(p, r):
     z = np.array([  sqrt(3)*L/6 * sin(p)*cos(r) + L/2*sin(r),
                     sqrt(3)*L/6 * sin(p)*cos(r) - L/2*sin(r),
                    -sqrt(3)*L/6 * sin(p)*cos(r)])
-    print(z)
-    zR = min(-1, max(z/R, 1))
+    zR = np.zeros(3)
+    for i in range(3):
+        zR[i] = constrain(-1, z[i]/R, 1)
     Va = arcsin(z/R) * 180/pi
     return Va
 
@@ -47,13 +50,15 @@ I have put three of this angle assignment separately to make it easy to understa
 """
 
 
-def angle_assign():
+def angle_assign(_):
     global servo1_angle, servo2_angle, servo3_angle
     global roll, pitch
-    roll = roll.Get()
-    pitch = pitch.Get()
-
-    servo1_angle = math.radians()
+    r = roll.get()
+    p = pitch.get()
+    Va = ikine(p, r)
+    servo1_angle = Va[0]
+    servo2_angle = Va[1]
+    servo3_angle = Va[2]
     write_servo()
 
 
@@ -93,9 +98,9 @@ def write_servo():
     ang2 = servo2_angle
     ang3 = servo3_angle
 
-    angles: tuple = (round(math.degrees(ang1), 1),
-                     round(math.degrees(ang2), 1),
-                     round(math.degrees(ang3), 1))
+    angles: tuple = (round(ang1, 1),
+                     round(ang2, 1),
+                     round(ang3, 1))
 
     write_arduino(str(angles))
 root.mainloop() # running loop
