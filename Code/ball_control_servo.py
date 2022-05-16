@@ -28,14 +28,13 @@ servo_angle_limit = [[ -90, 90 ],   # Servo 1
                      [ -90, 90 ],   # Servo 2
                      [ -90, 90 ]]   # Servo 3
 
-# Camera ID
+# Camera
 cap_id = 0
 IMG_W = 1280
 IMG_H = 720
 
 x, y = 0, 0 # Mouse click event coords
 plat_c, plat_r = [0,0], 0 # Platform definition
-
 col_mask = {'hmin': 0, 'smin': 0, 'vmin': 0, 'hmax': 255, 'smax': 255, 'vmax': 255}
 
 # Config file handling
