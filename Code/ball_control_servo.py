@@ -1,6 +1,4 @@
-from distutils.command.config import config
 from multiprocessing import Queue, Process
-from winreg import KEY_QUERY_VALUE
 import cvzone
 import cv2
 import serial
@@ -64,15 +62,24 @@ def read_configfile():
     time.sleep(0.1)
     print("Settings loaded from config.ini")
 
+class CameraHandler(Process):
+    def __init__(self, cap_id, queues):
+        self.cap_id = cap_id
+        self.queues = queues
+        super(CameraHandler, self).__init__(target=self.loop)
 
-class BallTracker(Process):
-    def __init__(self, coord_queue):
-        super(BallTracker, self).__init__(target=self.loop)
-    
     def loop(self):
-        print("Ball tracker started")
-        read_configfile()
-        app = App(cap_id)
+        print("Starting CameraHandler loop")
+        self.cap = cv2.VideoCapture(cap_id, cv2.CAP_DSHOW)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
+        # Will try to keep queues full with new frames
+        while True:
+            retval, img  = self.cap.read()
+            if retval:
+                for q in self.queues:
+                    if q.qsize() == 0:
+                        q.put_nowait(img)
 
 class ServoControl(Process):
     def __init__(self, serial_port, coord_queue, baudrate="250000", timeout=0.1):
@@ -128,19 +135,27 @@ class ServoControl(Process):
                 Va = self.inv_kine(p, r)
                 self.write_angles(Va[0], Va[1], Va[2])
 
+class GUI(Process):
+    def __init__(self, coord_queue, image_queue):
+        self.image_queue = image_queue
+        super(GUI, self).__init__(target=self.loop)
+    
+    def loop(self):
+        print("Ball tracker started")
+        read_configfile()
+        app = App(cap_id, self.image_queue)
+
 class App(tk.Tk):
     # Camera GUI
-    def __init__(self, cap_id):
+    def __init__(self, cap_id, image_queue):
         self.root = tk.Tk()
         self.canv = tk.Canvas(self.root, width=IMG_W, height=IMG_H, borderwidth=0, highlightthickness=0)
-        self.cap = cv2.VideoCapture(cap_id, cv2.CAP_DSHOW)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
+        self.image_queue = image_queue
         self.loop()
 
     def getImage(self):
         # Fetch camera frame, return both cv2 and tkinter images
-        retval, img  = self.cap.read()
+        img = self.image_queue.get()
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img_pil = Image.fromarray(img_rgb)
         img_tk = ImageTk.PhotoImage(image=img_pil)
@@ -267,6 +282,7 @@ class App(tk.Tk):
             col_mask["smax"] = sh.get()
             col_mask["vmin"] = vl.get()
             col_mask["vmax"] = vh.get()
+            print("Saving mask:")
             print(col_mask)
             save_configfile() # Store values
             popup.destroy()
@@ -332,7 +348,7 @@ class App(tk.Tk):
                     ball_pos_abs =  ((contours[0]['center'][0]), (contours[0]['center'][1]))
                     ball_area =     contours[0]['area']
                     #coord_queue.put()
-                    
+
                 if "center_circle" in locals():
                     self.canv.delete(center_circle)
                 rect_radius = np.sqrt(ball_area/np.pi)
@@ -341,15 +357,28 @@ class App(tk.Tk):
             # Update GUI
             self.root.update_idletasks()
             self.root.update()
-            time.sleep(0.05)
 
+class BallTracker(Process):
+    def __init__(self):
+        super(BallTracker, self).__init__(target=self.loop)
+
+    def loop():
+        pass
 
 if __name__ == '__main__':
     coord_queue = Queue() # Communication between the two processes - ball position coordinates
-    p1 = BallTracker(coord_queue)
-    #p2 = ServoControl(port_id, coord_queue)
+    image_queue1 = Queue(maxsize=1)
+    image_queue2 = Queue(maxsize=1)
 
+    p1 = GUI(coord_queue, image_queue1)
+    p2 = BallTracker(image_queue2, coord_queue)
+    #p2 = ServoControl(port_id, coord_queue)
+    p3 = CameraHandler(cap_id, [image_queue1, image_queue2])
+    
     p1.start()
     #p2.start()
+    p3.start()
+
     p1.join()
     #p2.join()
+    p3.kill()
