@@ -1,4 +1,6 @@
+from distutils.command.config import config
 from multiprocessing import Queue, Process
+from winreg import KEY_QUERY_VALUE
 import cvzone
 import cv2
 import serial
@@ -7,6 +9,7 @@ import tkinter as tk
 from PIL import Image, ImageTk
 import numpy as np
 from numpy import pi, cos, sin, arcsin, sqrt
+import configparser
 
 
 # ------------------------------------------- Ball tracking and position control -------------------------------------------
@@ -34,7 +37,33 @@ IMG_H = 720
 
 x, y = 0, 0 # Mouse click event coords
 plat_c, plat_r = [0,0], 0 # Platform definition
+
 col_mask = {'hmin': 0, 'smin': 0, 'vmin': 0, 'hmax': 255, 'smax': 255, 'vmax': 255}
+
+# Config file handling
+config_file = configparser.ConfigParser()
+config_file.read("config.ini")
+
+def save_configfile():
+    global config_file, plat_c, plat_r, col_mask
+    with open("config.ini","w") as file_object:
+        for key in col_mask:
+            config_file["ColMask"][key] = str(col_mask[key])
+        config_file["Platform"]["plat_c_x"] = str(plat_c[0])
+        config_file["Platform"]["plat_c_y"] = str(plat_c[1])
+        config_file["Platform"]["plat_r"] = str(plat_r)
+        config_file.write(file_object)
+
+def read_configfile():
+    global config_file, plat_c, plat_r, col_mask
+    for key in col_mask:
+        col_mask[key] = int(config_file["ColMask"][key])
+    plat_c[0] = float(config_file["Platform"]["plat_c_x"])
+    plat_c[1] = float(config_file["Platform"]["plat_c_y"])
+    plat_r = float(config_file["Platform"]["plat_r"])
+    time.sleep(0.1)
+    print("Settings loaded from config.ini")
+
 
 class BallTracker(Process):
     def __init__(self, coord_queue):
@@ -42,6 +71,7 @@ class BallTracker(Process):
     
     def loop(self):
         print("Ball tracker started")
+        read_configfile()
         app = App(cap_id)
 
 class ServoControl(Process):
@@ -98,7 +128,6 @@ class ServoControl(Process):
                 Va = self.inv_kine(p, r)
                 self.write_angles(Va[0], Va[1], Va[2])
 
-
 class App(tk.Tk):
     # Camera GUI
     def __init__(self, cap_id):
@@ -152,8 +181,6 @@ class App(tk.Tk):
         popup.wm_title("Platform center calibration")
         popup.bind("<Button 1>",self.getorigin)
         global x, y
-        global plat_defined
-        plat_defined = False
         calibCoords = []
 
         cv2Img, tkImg  = self.getImage()
@@ -173,6 +200,9 @@ class App(tk.Tk):
                 print("Center at X:{:.2f}; Y:{:.2f}\nRadius:{:.2f}".format(plat_c[0], plat_c[1], plat_r))
                 canvas.create_oval(plat_c[0]-plat_r, plat_c[1]-plat_r, plat_c[0]+plat_r, plat_c[1]+plat_r, fill="", outline="blue", width=4)
                 popup.update()
+                save_configfile() # Store values
+                global plat_defined
+                plat_defined = False        
                 time.sleep(1)
                 popup.destroy()
 
@@ -238,6 +268,7 @@ class App(tk.Tk):
             col_mask["vmin"] = vl.get()
             col_mask["vmax"] = vh.get()
             print(col_mask)
+            save_configfile() # Store values
             popup.destroy()
             global color_calibrated
             color_calibrated = True
@@ -273,6 +304,7 @@ class App(tk.Tk):
         btnCalibrateCenter = tk.Button(self.root, text="Calibrate center", command=self.center_calib_popup).pack(side="bottom")
         btnCalibrateColor = tk.Button(self.root, text="Calibrate color", command=self.color_calib_popup).pack(side="bottom")
 
+        global plat_defined, plat_r, plat_c
         plat_defined = False
         color_calibrated = False
 
@@ -280,7 +312,6 @@ class App(tk.Tk):
             # Draw new image
             cv2Img, tkImg  = self.getImage()
             self.canv.itemconfig(canv_img, image=tkImg)
-
             # Draw platform home pos. 
             if plat_r > 0 and not plat_defined:
                 if "xcoordhelper" in locals():
@@ -297,13 +328,16 @@ class App(tk.Tk):
                 mask, masked_image = self.mask_img(cv2Img, col_mask)
                 imgContour, contours = cvzone.findContours(cv2Img, mask)
                 if contours:
+                    # Ball found
                     ball_pos_abs =  ((contours[0]['center'][0]), (contours[0]['center'][1]))
                     ball_area =     contours[0]['area']
+                    #coord_queue.put()
+                    
                 if "center_circle" in locals():
                     self.canv.delete(center_circle)
                 rect_radius = np.sqrt(ball_area/np.pi)
                 center_circle = self.canv.create_oval(ball_pos_abs[0]-rect_radius, ball_pos_abs[1]-rect_radius, ball_pos_abs[0]+rect_radius, ball_pos_abs[1]+rect_radius, fill="", outline="green", width=4)
-            
+
             # Update GUI
             self.root.update_idletasks()
             self.root.update()
