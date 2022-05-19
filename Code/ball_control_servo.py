@@ -1,4 +1,5 @@
 from multiprocessing import Queue, Process
+import threading
 import cvzone
 import cv2
 import serial
@@ -29,13 +30,19 @@ servo_angle_limit = [[ -90, 90 ],   # Servo 1
                      [ -90, 90 ]]   # Servo 3
 
 # Camera
-cap_id = 0
+cap_id = 1
 IMG_W = 1280
 IMG_H = 720
 
 x, y = 0, 0 # Mouse click event coords
 plat_c, plat_r = [0,0], 0 # Platform definition
 col_mask = {'hmin': 0, 'smin': 0, 'vmin': 0, 'hmax': 255, 'smax': 255, 'vmax': 255}
+
+plat_actual_r = 0.175 # Actual radius in m
+
+# Regulator parameters
+reg_b = [4.8521423282,0.1963758629,-4.6557664653]
+reg_a = [1.0000000000,-0.5030443975,0.1419604340]
 
 # Config file handling
 config_file = configparser.ConfigParser()
@@ -61,6 +68,101 @@ def read_configfile():
     time.sleep(0.1)
     print("Settings loaded from config.ini")
 
+def find_ball(img, col_mask):
+    # Mask image and return the position and area of the largest contour
+    mask, masked_image = mask_img(img, col_mask)
+    img_contour, contours = cvzone.findContours(img, mask)
+    ball_pos_abs = (0,0)
+    ball_area = 0
+    img_contour = None
+    if contours:
+        # Ball found 
+        ball_pos_abs = ((contours[0]['center'][0]), (contours[0]['center'][1]))
+        ball_area = contours[0]['area']
+    return ball_pos_abs, ball_area, img_contour 
+
+def mask_img(img, col_mask):
+    # Remove pixels outside mask range
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    min = np.array([col_mask["hmin"], col_mask["smin"], col_mask["vmin"]])
+    max = np.array([col_mask["hmax"], col_mask["smax"], col_mask["vmax"]])
+    mask = cv2.inRange(hsv, min, max)
+    global platform_mask
+    mask = cv2.bitwise_and(mask, platform_mask)
+    res = cv2.bitwise_and(img, img, mask=mask)
+    return mask, res
+
+class FreshestFrame(threading.Thread):
+    # From https://gist.github.com/crackwitz/15c3910f243a42dcd9d4a40fcdb24e40
+	def __init__(self, capture, name='FreshestFrame'):
+		self.capture = capture
+		assert self.capture.isOpened()
+
+		# this lets the read() method block until there's a new frame
+		self.cond = threading.Condition()
+
+		# this allows us to stop the thread gracefully
+		self.running = False
+
+		# keeping the newest frame around
+		self.frame = None
+
+		# passing a sequence number allows read() to NOT block
+		# if the currently available one is exactly the one you ask for
+		self.latestnum = 0
+
+		# this is just for demo purposes		
+		self.callback = None
+		
+		super().__init__(name=name)
+		self.start()
+
+	def start(self):
+		self.running = True
+		super().start()
+
+	def release(self, timeout=None):
+		self.running = False
+		self.join(timeout=timeout)
+		self.capture.release()
+
+	def run(self):
+		counter = 0
+		while self.running:
+			# block for fresh frame
+			(rv, img) = self.capture.read()
+			assert rv
+			counter += 1
+
+			# publish the frame
+			with self.cond: # lock the condition for this operation
+				self.frame = img if rv else None
+				self.latestnum = counter
+				self.cond.notify_all()
+
+			if self.callback:
+				self.callback(img)
+
+	def read(self, wait=True, seqnumber=None, timeout=None):
+		# with no arguments (wait=True), it always blocks for a fresh frame
+		# with wait=False it returns the current frame immediately (polling)
+		# with a seqnumber, it blocks until that frame is available (or no wait at all)
+		# with timeout argument, may return an earlier frame;
+		#   may even be (0,None) if nothing received yet
+
+		with self.cond:
+			if wait:
+				if seqnumber is None:
+					seqnumber = self.latestnum+1
+				if seqnumber < 1:
+					seqnumber = 1
+				
+				rv = self.cond.wait_for(lambda: self.latestnum >= seqnumber, timeout=timeout)
+				if not rv:
+					return (self.latestnum, self.frame)
+
+			return (self.latestnum, self.frame)
+
 class CameraHandler(Process):
     def __init__(self, cap_id, queues):
         self.cap_id = cap_id
@@ -72,20 +174,29 @@ class CameraHandler(Process):
         self.cap = cv2.VideoCapture(cap_id, cv2.CAP_DSHOW)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, -8)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 0)
+        self.fresh = FreshestFrame(self.cap)
         # Will try to keep queues full with new frames
         while True:
-            retval, img  = self.cap.read()
+            retval, img  = self.fresh.read()
             if retval:
                 for q in self.queues:
                     if q.qsize() == 0:
                         q.put_nowait(img)
 
+
 class ServoControl(Process):
     def __init__(self, serial_port, coord_queue, baudrate="250000", timeout=0.1):
         # Platform kinematics parameters
-        self.platform_R = 40
-        self.platform_L = 225
+        self.platform_R = 0.040
+        self.platform_L = 0.225
         self.coord_queue = coord_queue
+        global reg_b, reg_a
+        self.xctrl = ObserverControllerFilter(b=reg_b, a=reg_a)
+        self.yctrl = ObserverControllerFilter(b=reg_b, a=reg_a)
         # Begin
         super(ServoControl, self).__init__(target=self.arduino_init, args=(serial_port, baudrate, timeout))
 
@@ -99,11 +210,9 @@ class ServoControl(Process):
         # Calculate servo angles from roll and pitch angles
         L = self.platform_L
         R = self.platform_R
-        p = p * pi/180  # Degrees to radians
-        r = r * pi/180
-        z = np.array([  sqrt(3)*L/6 * sin(p)*cos(r) + L/2*sin(r),
-                        sqrt(3)*L/6 * sin(p)*cos(r) - L/2*sin(r),
-                    -sqrt(3)*L/6 * sin(p)*cos(r)])
+        z = np.array([  sqrt(3)*L/6 * sin(p)*cos(r) - L/2*sin(r),
+                        sqrt(3)*L/6 * sin(p)*cos(r) + L/2*sin(r),
+                        -sqrt(3)*L/6 * sin(p)*cos(r)])
         # Constrain input to arcsin function (must be in [-1, 1])
         zR = np.zeros(3)
         for i in range(3):
@@ -115,42 +224,91 @@ class ServoControl(Process):
         return max(lower, min(val, upper))
 
     def write_angles(self, ang1, ang2, ang3):
-        angles: tuple = (round(ang1, 1),
-                         round(ang2, 1),
-                         round(ang3, 1))
+        angles: tuple = (round(-ang1, 1), # Flip angles as servos are reversed
+                         round(-ang2, 1),
+                         round(-ang3, 1))
         self.arduino.write(bytes(str(angles), "utf-8"))
     
     def loop(self):
         print("ServoControl started")
+        global plat_c, plat_r
+        i = 0
+        t0 = time.time()
+        t = 0
         while True:
             # Wait for queue data
             coord_info = self.coord_queue.get()
+            t += time.time() - t0
+            i += 1
+            t0 = time.time()
+            if i >= 100:
+                print("AVG. FPS:", i / t)
+                t = 0
+                i = 0
             if coord_info == "nil":
                 print("Ball not found")
             else:
+                circle = 0.08 * np.array([sin(2*pi*0.2*time.time()), cos(2*pi*0.05*time.time())])
+                fig_8 = 0.08 * np.array([sin(2*pi*0.2*time.time()), cos(2*pi*0.05*time.time())])
+                centered = [0, 0]
+                
+                pr = centered
+
+                global plat_actual_r
+                pos_m = np.array([coord_info[0]-plat_c[0], coord_info[1]-plat_c[1]]) / plat_r * plat_actual_r # Convert pixels to meters
+                #print("Ball pos. X: {%.2f}, Y: {%.2f}"%(pos_m[0], pos_m[1]))
                 # Calculate desired angles
-                p, r = 0, 0
-                print("P:", p, " R:", r)
+                p = self.xctrl.run(pr[0] - pos_m[1])
+                r = self.yctrl.run(pr[1] - pos_m[0])
+                # Constrain
+                angle_max = 12.5 * pi/180
+                p = max(-angle_max, min(angle_max, p))
+                r = max(-angle_max, min(angle_max, r))
+                # print("P:", p, " R:", r)
                 Va = self.inv_kine(p, r)
                 self.write_angles(Va[0], Va[1], Va[2])
 
+class ObserverControllerFilter():
+    # IIR filter
+    def __init__(self, b, a):
+        self.a = np.array(a)
+        self.b = np.array(b)
+        self.x_prev = np.zeros(len(b)-1)
+        self.y_prev = np.zeros(len(b)-1)
+
+    def run(self, x):
+        # Calculate filter step
+        y = self.b[0] * x
+        for i in range(len(self.x_prev)):
+            y += self.b[i+1] * self.x_prev[i]
+            y -= self.a[i+1] * self.y_prev[i]
+        y /= self.a[0]
+        self.x_prev = np.roll(self.x_prev, 1)
+        self.x_prev[0] = x
+        self.y_prev = np.roll(self.y_prev, 1)
+        self.y_prev[0] = y
+        return y
+
 class GUI(Process):
-    def __init__(self, coord_queue, image_queue):
+    def __init__(self, image_queue, coord_queue):
         self.image_queue = image_queue
         super(GUI, self).__init__(target=self.loop)
     
     def loop(self):
-        print("Ball tracker started")
+        print("GUI started")
         read_configfile()
-        app = App(cap_id, self.image_queue)
+        app = App(self.image_queue)
+        app.loop()
 
 class App(tk.Tk):
     # Camera GUI
-    def __init__(self, cap_id, image_queue):
+    def __init__(self, image_queue):
         self.root = tk.Tk()
+        self.root.geometry("+0+0") # Open window in top left corner
         self.canv = tk.Canvas(self.root, width=IMG_W, height=IMG_H, borderwidth=0, highlightthickness=0)
         self.image_queue = image_queue
-        self.loop()
+        self.plat_defined = False
+        self.color_calibrated = False
 
     def getImage(self):
         # Fetch camera frame, return both cv2 and tkinter images
@@ -166,14 +324,6 @@ class App(tk.Tk):
         img_pil = Image.fromarray(img_rgb)
         img_tk = ImageTk.PhotoImage(image=img_pil)
         return img_tk
-
-    def mask_img(self, img, col_mask):
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        min = np.array([col_mask["hmin"], col_mask["smin"], col_mask["vmin"]])
-        max = np.array([col_mask["hmax"], col_mask["smax"], col_mask["vmax"]])
-        mask = cv2.inRange(hsv, min, max)
-        res = cv2.bitwise_and(img, img, mask=mask)
-        return mask, res
 
     def imagePopup(self):
         # Show still image in new window
@@ -215,8 +365,7 @@ class App(tk.Tk):
                 canvas.create_oval(plat_c[0]-plat_r, plat_c[1]-plat_r, plat_c[0]+plat_r, plat_c[1]+plat_r, fill="", outline="blue", width=4)
                 popup.update()
                 save_configfile() # Store values
-                global plat_defined
-                plat_defined = False        
+                self.plat_defined = False        
                 time.sleep(1)
                 popup.destroy()
 
@@ -285,8 +434,7 @@ class App(tk.Tk):
             print(col_mask)
             save_configfile() # Store values
             popup.destroy()
-            global color_calibrated
-            color_calibrated = True
+            self.color_calibrated = True
 
         confirm_btn = tk.Button(control_frame, text="Confirm", command=save_mask_vals)
         confirm_btn.pack(side="bottom")
@@ -297,10 +445,9 @@ class App(tk.Tk):
         while 1:
             cv2Img, tkImg = self.getImage()
             read_mask_vals()
-            mask, masked_img = self.mask_img(cv2Img, local_mask)
+            mask, masked_img = mask_img(cv2Img, local_mask)
             mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             if mask_enabled.get():
-                print("Masked")
                 tkImg = self.cv2_to_tk(mask_bgr)
             else:
                 tkImg = self.cv2_to_tk(masked_img)
@@ -311,6 +458,7 @@ class App(tk.Tk):
 
     def loop(self):
         #  Initialize image
+        print("GUI starting")
         cv2Img, tkImg = self.getImage()
         canv_img = self.canv.create_image((0, 0), image=tkImg, anchor="nw")
         self.canv.pack(side="left")
@@ -319,16 +467,16 @@ class App(tk.Tk):
         btnCalibrateCenter = tk.Button(self.root, text="Calibrate center", command=self.center_calib_popup).pack(side="bottom")
         btnCalibrateColor = tk.Button(self.root, text="Calibrate color", command=self.color_calib_popup).pack(side="bottom")
 
-        global plat_defined, plat_r, plat_c
-        plat_defined = False
-        color_calibrated = False
+        global plat_r, plat_c, col_mask
+        self.plat_defined = False
+        self.color_calibrated = False
 
         while 1:
             # Draw new image
             cv2Img, tkImg  = self.getImage()
             self.canv.itemconfig(canv_img, image=tkImg)
             # Draw platform home pos. 
-            if plat_r > 0 and not plat_defined:
+            if plat_r > 0 and not self.plat_defined:
                 if "xcoordhelper" in locals():
                     self.canv.delete(xcoordhelper)
                     self.canv.delete(ycoordhelper)
@@ -336,18 +484,11 @@ class App(tk.Tk):
                 xcoordhelper = self.canv.create_line(plat_c[0], plat_c[1], plat_c[0] + 20, plat_c[1], fill="red", width=2)
                 ycoordhelper = self.canv.create_line(plat_c[0], plat_c[1], plat_c[0], plat_c[1] + 20, fill="blue", width=2)
                 platcircle = self.canv.create_oval(plat_c[0]-plat_r, plat_c[1]-plat_r, plat_c[0]+plat_r, plat_c[1]+plat_r, fill="", outline="blue", width=1)
-                plat_defined = True
+                self.plat_defined = True
 
             # Detect contours and draw outline
-            if color_calibrated:
-                mask, masked_image = self.mask_img(cv2Img, col_mask)
-                imgContour, contours = cvzone.findContours(cv2Img, mask)
-                if contours:
-                    # Ball found
-                    ball_pos_abs =  ((contours[0]['center'][0]), (contours[0]['center'][1]))
-                    ball_area =     contours[0]['area']
-                    #coord_queue.put()
-
+            if self.color_calibrated:
+                ball_pos_abs, ball_area, _ = find_ball(cv2Img, col_mask)
                 if "center_circle" in locals():
                     self.canv.delete(center_circle)
                 rect_radius = np.sqrt(ball_area/np.pi)
@@ -357,27 +498,50 @@ class App(tk.Tk):
             self.root.update_idletasks()
             self.root.update()
 
+
 class BallTracker(Process):
-    def __init__(self):
+    # Tracks the largest contour visible after masking
+    def __init__(self, image_queue, coord_queues):
+        self.image_queue = image_queue
+        self.coord_queues = coord_queues
         super(BallTracker, self).__init__(target=self.loop)
 
-    def loop():
-        pass
+    def loop(self):
+        # Get ball position as fast as images are captured, and output coordinates
+        print("Ball tracker started")
+        global col_mask
+        while True:
+            img = self.image_queue.get()
+            ball_pos, ball_area, _ = find_ball(img, col_mask) # TODO: Will not get updated unless application is closed
+            for q in self.coord_queues:
+                if q.qsize() == 0:
+                    q.put_nowait(ball_pos)
+
+
+
+read_configfile()
+
+# Mask out area outside platform circle
+platform_mask = np.zeros((IMG_H, IMG_W), np.uint8)
+platform_mask = cv2.circle(platform_mask, center=(round(plat_c[0]), round(plat_c[1])), radius=round(plat_r * 0.8), thickness=-1, color=255)
 
 if __name__ == '__main__':
-    coord_queue = Queue() # Communication between the two processes - ball position coordinates
-    image_queue1 = Queue(maxsize=1)
-    image_queue2 = Queue(maxsize=1)
+    coord_queue_gui = Queue(maxsize=1) # Communication between the two processes - ball position coordinates
+    coord_queue_servo = Queue(maxsize=1)
+    image_queue_gui = Queue(maxsize=1)
+    image_queue_tracker = Queue(maxsize=1)
 
-    p1 = GUI(coord_queue, image_queue1)
-    p2 = BallTracker(image_queue2, coord_queue)
-    #p2 = ServoControl(port_id, coord_queue)
-    p3 = CameraHandler(cap_id, [image_queue1, image_queue2])
+    camera = CameraHandler(cap_id, [image_queue_gui, image_queue_tracker])
+    balltracker = BallTracker(image_queue_tracker, [coord_queue_servo, coord_queue_gui])
+    servo = ServoControl(port_id, coord_queue_servo)
+    gui = GUI(image_queue_gui, coord_queue_gui)
+
+    camera.start()
+    gui.start()
+    balltracker.start()
+    servo.start()
     
-    p1.start()
-    #p2.start()
-    p3.start()
-
-    p1.join()
-    #p2.join()
-    p3.kill()
+    gui.join()
+    camera.kill()
+    balltracker.kill()
+    servo.kill()
