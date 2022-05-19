@@ -33,8 +33,8 @@ def ikine(p, r):
     L = 225
     p = p * pi/180
     r = r * pi/180
-    z = np.array([  sqrt(3)*L/6 * sin(p)*cos(r) + L/2*sin(r),
-                    sqrt(3)*L/6 * sin(p)*cos(r) - L/2*sin(r),
+    z = np.array([  sqrt(3)*L/6 * sin(p)*cos(r) - L/2*sin(r),
+                    sqrt(3)*L/6 * sin(p)*cos(r) + L/2*sin(r),
                    -sqrt(3)*L/6 * sin(p)*cos(r)])
     zR = np.zeros(3)
     for i in range(3):
@@ -94,9 +94,9 @@ def write_arduino(data):
 
 # write function that will write the angles into a single tuple and call write_arduino function to pass it to arduino
 def write_servo():
-    ang1 = servo1_angle
-    ang2 = servo2_angle
-    ang3 = servo3_angle
+    ang1 = -servo1_angle # Negative, as all servos are reversed from the mathematics
+    ang2 = -servo2_angle
+    ang3 = -servo3_angle
 
     angles: tuple = (round(ang1, 1),
                      round(ang2, 1),
