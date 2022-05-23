@@ -1,5 +1,4 @@
 import configparser
-from sys import get_coroutine_origin_tracking_depth
 import time
 from multiprocessing import Process
 import threading
@@ -207,7 +206,7 @@ class ServoControl(Process):
         R = self.platform_R
         z = np.array([  sqrt(3)*L/6 * sin(p)*cos(r) - L/2*sin(r),
                         sqrt(3)*L/6 * sin(p)*cos(r) + L/2*sin(r),
-                        -sqrt(3)*L/6 * sin(p)*cos(r)])
+                        -sqrt(3)*L/3 * sin(p)*cos(r)])
         # Constrain input to arcsin function (must be in [-1, 1])
         zR = np.zeros(3)
         for i in range(3):
@@ -229,23 +228,25 @@ class ServoControl(Process):
         global plat_c, plat_r
         i = 0
         t0 = time.time()
-        t = 0
+        tim = 0
         coord_info = (0,0)
         while True:
             coord_info = self.get_coord()
-            t += time.time() - t0
+            tim += time.time() - t0
             i += 1
             t0 = time.time()
             if i >= 100:
-                print("AVG. FPS:", i / t)
-                t = 0
+                print("AVG. FPS:", i / tim)
+                tim = 0
                 i = 0
             if coord_info == (0,0):
                 print("Ball not found")
                 pass
             else:
-                pr = 0.08 * np.array([sin(2*pi*0.4*time.time()), sin(2*pi*0.4*time.time())*cos(2*pi*0.4*time.time())])
-                #pr = [0, 0]
+                t = time.time()
+                #pr = 0.08 * np.array([sin(2*pi*0.4*t), sin(2*pi*0.4*t)*cos(2*pi*0.4*t)])
+                pr = [0, 0]
+                #pr = [0.05*(1-2*(t%10<2.5 + t%10>7.5)), 0.05*(1-2*(2.5 < t%10 < 7.5))]
 
                 global plat_actual_r
                 pos_m = np.array([coord_info[0]-plat_c[0], coord_info[1]-plat_c[1]]) / plat_r * plat_actual_r # Convert pixels to meters

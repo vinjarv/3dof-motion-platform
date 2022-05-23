@@ -212,7 +212,7 @@ class ServoControl(Process):
         R = self.platform_R
         z = np.array([  sqrt(3)*L/6 * sin(p)*cos(r) - L/2*sin(r),
                         sqrt(3)*L/6 * sin(p)*cos(r) + L/2*sin(r),
-                        -sqrt(3)*L/6 * sin(p)*cos(r)])
+                        -sqrt(3)*L/3 * sin(p)*cos(r)])
         # Constrain input to arcsin function (must be in [-1, 1])
         zR = np.zeros(3)
         for i in range(3):
@@ -251,7 +251,7 @@ class ServoControl(Process):
                 circle = 0.08 * np.array([sin(2*pi*0.2*time.time()), cos(2*pi*0.05*time.time())])
                 fig_8 = 0.08 * np.array([sin(2*pi*0.2*time.time()), cos(2*pi*0.05*time.time())])
                 centered = [0, 0]
-                
+
                 pr = centered
 
                 global plat_actual_r
