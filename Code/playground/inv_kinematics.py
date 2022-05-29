@@ -1,4 +1,3 @@
-from cProfile import label
 import numpy as np
 from numpy import pi, sqrt, sin, cos, arcsin
 import matplotlib.pyplot as plt
@@ -36,9 +35,9 @@ plt.show()
 
 r = p.copy()
 p = -12.5
-Va = np.zeros(len(p))
+Va = []
 for i in range(len(Va)):
-    Va[i] = ikine(p, r[i])
+    Va.append(ikine(p, r[i]))
 plt.figure(1)
 for i, angle in enumerate(Va):
     plt.plot(r, angle, label="Motor {}".format(i+1))

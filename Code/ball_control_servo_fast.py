@@ -18,6 +18,7 @@ servo2_angle = 0
 servo3_angle = 0
 
 # Camera
+# IDs should be from 0 and up. Internal webcam is probably 0, USB webcam will then be 1
 cap_id = 1
 IMG_W = 1280
 IMG_H = 720
