@@ -1,16 +1,26 @@
 # 3dof-motion-platform
 
-1.	simple_ball_tracker.py : This code just tracks the ball and gives the coordinates.
-2.	simple_servo_control.py : This code provides a GUI that can be used as a controller for the servos. The code initiates a serial communication with the servos with angle input. 
-3.	two_in_one.py : This code combines both the tracker and controller by using multiprocessing. 
-4.	ball_control_servo.py : This code does a simple mapping between the tracker and servos, like I just put x,y,z coordinate of the balls as input to angles on the servos, so x-coordinate control servo 1, y-coordinate control servo 2 and z-control servo 3. 
+This project was a part of the subject AIS2102 Dynamical systems. The task given was to control the position of a ball on a platform. This included building the platform, designing a regulator, and implementing it in code.
 
-Python setup:
+Folders:
+- Code - Arduino and python code for running the project
+- Code/playground - test code for various functions
+- Matlab - files for generation regulator parameters and simulating the response
+- Parts for 3D printing - STL files used in the project
+- Parts for laser cutting - DXF files
+- Starter code - supplied code examples from project 
 
-Run in shell
+1.	Code/config_gui.py : GUI for selecting platform position and ball color mask
+2.	Code/ball_control_servo_fast.py : Controls ball position on platform. Main project code
+
+
+Python setup / installation:
+
+Navigate to folder and run in shell:
 ```console
-python -m venv Code\venv
-Code\venv\Scripts\activate
+cd Code
+python -m venv venv
+venv\Scripts\activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r ../requirements.txt
 ```
