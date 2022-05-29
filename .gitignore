@@ -1,1 +1,4 @@
 Code/venv
+Matlab/slprj/*
+Matlab/*.slxc
+Matlab/*.autosave

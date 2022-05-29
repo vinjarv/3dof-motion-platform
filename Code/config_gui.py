@@ -13,24 +13,11 @@ import configparser
 
 # ------------------------------------------- Ball tracking and position control -------------------------------------------
 """
-Run regulator, camera capture and GUI in parallel 
+Run camera capture and GUI in parallel 
 """
 
-# Serial/arduino setup
-port_id = 'COM5'
-
-# Define servo angles and set a value
-servo1_angle = 0
-servo2_angle = 0
-servo3_angle = 0
-
-# Maximum allowable rotation angle for the servos
-servo_angle_limit = [[ -90, 90 ],   # Servo 1
-                     [ -90, 90 ],   # Servo 2
-                     [ -90, 90 ]]   # Servo 3
-
 # Camera
-cap_id = 1
+cap_id = 0
 IMG_W = 1280
 IMG_H = 720
 
@@ -39,10 +26,6 @@ plat_c, plat_r = [0,0], 0 # Platform definition
 col_mask = {'hmin': 0, 'smin': 0, 'vmin': 0, 'hmax': 255, 'smax': 255, 'vmax': 255}
 
 plat_actual_r = 0.175 # Actual radius in m
-
-# Regulator parameters
-reg_b = [4.8521423282,0.1963758629,-4.6557664653]
-reg_a = [1.0000000000,-0.5030443975,0.1419604340]
 
 # Config file handling
 config_file = configparser.ConfigParser()
@@ -187,107 +170,6 @@ class CameraHandler(Process):
                     if q.qsize() == 0:
                         q.put_nowait(img)
 
-
-class ServoControl(Process):
-    def __init__(self, serial_port, coord_queue, baudrate="250000", timeout=0.1):
-        # Platform kinematics parameters
-        self.platform_R = 0.040
-        self.platform_L = 0.225
-        self.coord_queue = coord_queue
-        global reg_b, reg_a
-        self.xctrl = ObserverControllerFilter(b=reg_b, a=reg_a)
-        self.yctrl = ObserverControllerFilter(b=reg_b, a=reg_a)
-        # Begin
-        super(ServoControl, self).__init__(target=self.arduino_init, args=(serial_port, baudrate, timeout))
-
-    def arduino_init(self, serial_port, baudrate, timeout):
-        # Initialize serial interface
-        self.arduino = serial.Serial(port=serial_port, baudrate=baudrate, timeout=timeout)
-        # Begin servo control loop
-        self.loop()
-
-    def inv_kine(self, p, r):
-        # Calculate servo angles from roll and pitch angles
-        L = self.platform_L
-        R = self.platform_R
-        z = np.array([  sqrt(3)*L/6 * sin(p)*cos(r) - L/2*sin(r),
-                        sqrt(3)*L/6 * sin(p)*cos(r) + L/2*sin(r),
-                        -sqrt(3)*L/3 * sin(p)*cos(r)])
-        # Constrain input to arcsin function (must be in [-1, 1])
-        zR = np.zeros(3)
-        for i in range(3):
-            zR[i] = self.constrain(-1, z[i]/R, 1)
-        Va = arcsin(zR) * 180/pi # Radians to degrees
-        return Va
-
-    def constrain(self, lower, val, upper):
-        return max(lower, min(val, upper))
-
-    def write_angles(self, ang1, ang2, ang3):
-        angles: tuple = (round(-ang1, 1), # Flip angles as servos are reversed
-                         round(-ang2, 1),
-                         round(-ang3, 1))
-        self.arduino.write(bytes(str(angles), "utf-8"))
-    
-    def loop(self):
-        print("ServoControl started")
-        global plat_c, plat_r
-        i = 0
-        t0 = time.time()
-        t = 0
-        while True:
-            # Wait for queue data
-            coord_info = self.coord_queue.get()
-            t += time.time() - t0
-            i += 1
-            t0 = time.time()
-            if i >= 100:
-                print("AVG. FPS:", i / t)
-                t = 0
-                i = 0
-            if coord_info == "nil":
-                print("Ball not found")
-            else:
-                circle = 0.08 * np.array([sin(2*pi*0.2*time.time()), cos(2*pi*0.05*time.time())])
-                fig_8 = 0.08 * np.array([sin(2*pi*0.2*time.time()), cos(2*pi*0.05*time.time())])
-                centered = [0, 0]
-
-                pr = centered
-
-                global plat_actual_r
-                pos_m = np.array([coord_info[0]-plat_c[0], coord_info[1]-plat_c[1]]) / plat_r * plat_actual_r # Convert pixels to meters
-                #print("Ball pos. X: {%.2f}, Y: {%.2f}"%(pos_m[0], pos_m[1]))
-                # Calculate desired angles
-                p = self.xctrl.run(pr[0] - pos_m[1])
-                r = self.yctrl.run(pr[1] - pos_m[0])
-                # Constrain
-                angle_max = 12.5 * pi/180
-                p = max(-angle_max, min(angle_max, p))
-                r = max(-angle_max, min(angle_max, r))
-                # print("P:", p, " R:", r)
-                Va = self.inv_kine(p, r)
-                self.write_angles(Va[0], Va[1], Va[2])
-
-class ObserverControllerFilter():
-    # IIR filter
-    def __init__(self, b, a):
-        self.a = np.array(a)
-        self.b = np.array(b)
-        self.x_prev = np.zeros(len(b)-1)
-        self.y_prev = np.zeros(len(b)-1)
-
-    def run(self, x):
-        # Calculate filter step
-        y = self.b[0] * x
-        for i in range(len(self.x_prev)):
-            y += self.b[i+1] * self.x_prev[i]
-            y -= self.a[i+1] * self.y_prev[i]
-        y /= self.a[0]
-        self.x_prev = np.roll(self.x_prev, 1)
-        self.x_prev[0] = x
-        self.y_prev = np.roll(self.y_prev, 1)
-        self.y_prev[0] = y
-        return y
 
 class GUI(Process):
     def __init__(self, image_queue, coord_queue):
@@ -527,21 +409,17 @@ platform_mask = cv2.circle(platform_mask, center=(round(plat_c[0]), round(plat_c
 
 if __name__ == '__main__':
     coord_queue_gui = Queue(maxsize=1) # Communication between the two processes - ball position coordinates
-    coord_queue_servo = Queue(maxsize=1)
     image_queue_gui = Queue(maxsize=1)
     image_queue_tracker = Queue(maxsize=1)
 
     camera = CameraHandler(cap_id, [image_queue_gui, image_queue_tracker])
-    balltracker = BallTracker(image_queue_tracker, [coord_queue_servo, coord_queue_gui])
-    servo = ServoControl(port_id, coord_queue_servo)
+    balltracker = BallTracker(image_queue_tracker, [coord_queue_gui])
     gui = GUI(image_queue_gui, coord_queue_gui)
 
     camera.start()
     gui.start()
     balltracker.start()
-    servo.start()
-    
+
     gui.join()
     camera.kill()
     balltracker.kill()
-    servo.kill()

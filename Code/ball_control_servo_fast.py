@@ -37,6 +37,7 @@ config_file = configparser.ConfigParser()
 config_file.read("config.ini")
 
 def save_configfile():
+    # Write parameters to config file
     global config_file, plat_c, plat_r, col_mask
     with open("config.ini","w") as file_object:
         for key in col_mask:
@@ -47,6 +48,7 @@ def save_configfile():
         config_file.write(file_object)
 
 def read_configfile():
+    # Get parameters from config file
     global config_file, plat_c, plat_r, col_mask
     for key in col_mask:
         col_mask[key] = int(config_file["ColMask"][key])
@@ -56,6 +58,8 @@ def read_configfile():
     print("Settings loaded from config.ini")
 
 class FreshestFrame(threading.Thread):
+    # From https://gist.github.com/crackwitz/15c3910f243a42dcd9d4a40fcdb24e40
+    # Ensure returned image frame is the most recent
 	def __init__(self, capture, name='FreshestFrame'):
 		self.capture = capture
 		assert self.capture.isOpened()
@@ -156,7 +160,7 @@ class ServoControl(Process):
         self.col_mask = col_mask
         # Mask out area outside platform circle
         self.platform_mask = np.zeros((IMG_H, IMG_W), np.uint8)
-        self.platform_mask = cv2.circle(self.platform_mask, center=(round(plat_c[0]), round(plat_c[1])), radius=round(plat_r * 0.8), thickness=-1, color=255)
+        self.platform_mask = cv2.circle(self.platform_mask, center=(round(plat_c[0]), round(plat_c[1])), radius=round(plat_r * 0.9), thickness=-1, color=255)
         # Regulators
         self.xctrl = ObserverControllerFilter(b=reg_b, a=reg_a)
         self.yctrl = ObserverControllerFilter(b=reg_b, a=reg_a)
@@ -175,7 +179,7 @@ class ServoControl(Process):
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-        self.cap.set(cv2.CAP_PROP_EXPOSURE, -8)
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, -6)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 0)
 
         # Class to get newest possible camera frame
@@ -184,7 +188,7 @@ class ServoControl(Process):
         self.loop()
 
     def get_coord(self):
-        # Get current position of ball 
+        # Get current position of ball from webcam
         _, img = self.fresh.read()
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         min = np.array([self.col_mask["hmin"], self.col_mask["smin"], self.col_mask["vmin"]])
@@ -215,15 +219,18 @@ class ServoControl(Process):
         return Va
 
     def constrain(self, lower, val, upper):
+        # Limit val between lower and upper
         return max(lower, min(val, upper))
 
     def write_angles(self, ang1, ang2, ang3):
-        angles: tuple = (round(-ang1, 1), # Flip angles as servos are reversed
+        # Write servo angles to arduino over the serial port
+        angles: tuple = (round(-ang1, 1), # Flip angles as servo rotations are reversed
                          round(-ang2, 1),
                          round(-ang3, 1))
         self.arduino.write(bytes(str(angles), "utf-8"))
     
     def loop(self):
+        # Regulator main loop
         print("ServoControl started")
         global plat_c, plat_r
         i = 0
@@ -244,8 +251,8 @@ class ServoControl(Process):
                 pass
             else:
                 t = time.time()
-                #pr = 0.08 * np.array([sin(2*pi*0.4*t), sin(2*pi*0.4*t)*cos(2*pi*0.4*t)])
-                pr = [0, 0]
+                pr = 0.08 * np.array([sin(2*pi*0.4*t), sin(2*pi*0.4*t)*cos(2*pi*0.4*t)])
+                #pr = [0, 0]
                 #pr = [0.05*(1-2*(t%10<2.5 + t%10>7.5)), 0.05*(1-2*(2.5 < t%10 < 7.5))]
 
                 global plat_actual_r
@@ -260,6 +267,7 @@ class ServoControl(Process):
                 r = max(-angle_max, min(angle_max, r))
                 Va = self.inv_kine(p, r)
                 self.write_angles(Va[0], Va[1], Va[2])
+
 
 read_configfile()
 
