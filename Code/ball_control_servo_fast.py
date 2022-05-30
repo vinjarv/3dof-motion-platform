@@ -253,8 +253,13 @@ class ServoControl(Process):
                 pass
             else:
                 t = time.time()
+
+                # Reference position - input to regulators
+                # Figure 8
                 pr = 0.08 * np.array([sin(2*pi*0.4*t), sin(2*pi*0.4*t)*cos(2*pi*0.4*t)])
+                # Fixed position
                 #pr = [0, 0]
+                # 4 points
                 #pr = [0.05*(1-2*(t%10<2.5 + t%10>7.5)), 0.05*(1-2*(2.5 < t%10 < 7.5))]
 
                 global plat_actual_r
