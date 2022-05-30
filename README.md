@@ -1,6 +1,6 @@
 # 3dof-motion-platform
 
-This project was a part of the subject AIS2102 Dynamical systems. The task given was to control the position of a ball on a platform. This included building the platform, designing a regulator, and implementing it in code.
+This project was a part of the subject AIS2102 Dynamical Systems at NTNU Ålesund, Spring 2022. The task given was to control the position of a ball on a platform. This included building the platform, designing a regulator, and implementing it in code.
 
 ## Folders:
 - Code - Arduino and python code for running the project

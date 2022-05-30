@@ -20,6 +20,7 @@ servo3_angle = 0
 # Camera
 # IDs should be from 0 and up. Internal webcam is probably 0, USB webcam will then be 1
 cap_id = 1
+cam_exposure = -8 # Set as low as possible to get 30fps
 IMG_W = 1280
 IMG_H = 720
 
@@ -180,7 +181,7 @@ class ServoControl(Process):
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-        self.cap.set(cv2.CAP_PROP_EXPOSURE, -6)
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, cam_exposure)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 0)
 
         # Class to get newest possible camera frame

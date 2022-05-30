@@ -19,6 +19,7 @@ Run camera capture and GUI in parallel
 # Camera
 # IDs should be from 0 and up. Internal webcam is probably 0, USB webcam will then be 1
 cap_id = 1
+cam_exposure = -8 # Set as low as possible to get 30fps
 IMG_W = 1280
 IMG_H = 720
 
@@ -158,9 +159,9 @@ class CameraHandler(Process):
         self.cap = cv2.VideoCapture(cap_id, cv2.CAP_DSHOW)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        self.cap.set(cv2.CAP_PROP_FPS, 30) # Doesn't seem to do anything
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-        self.cap.set(cv2.CAP_PROP_EXPOSURE, -8)
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, cam_exposure)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 0)
         self.fresh = FreshestFrame(self.cap)
         # Will try to keep queues full with new frames
